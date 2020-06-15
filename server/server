@@ -1,0 +1,67 @@
+#! /usr/bin/env python3
+
+import threading
+import socket
+import pickle
+import hashlib
+import argparse
+
+parser = argparse.ArgumentParser()
+parser.add_argument("max_clients")
+parser.add_argument("port")
+args = parser.parse_args()
+
+MAX_CLIENTS = int(args.max_clients)
+PORT = int(args.port)
+
+
+chunk_size = 512
+
+
+class Server(threading.Thread):
+    def __init__(self, port):
+        super().__init__()
+        self.server_addr = (("127.0.0.1", port))
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.bind(self.server_addr)
+
+    def run(self):
+        print(self.server_addr)
+        while True:
+            self.recv_file()
+
+    def recv_file(self):
+        # receive chunk
+        pkt_list = []
+
+        while True:
+            pkt_raw, address = self.sock.recvfrom(4096)
+            try:
+                pkt = pickle.loads(pkt_raw)
+            except:
+                print("decode error, client resending")
+                continue
+            hash_check = hashlib.sha1(pkt["payload"]).hexdigest()
+
+            # pass hash check, send ACK to client
+            if pkt["checksum"] == hash_check:
+                self.sock.sendto(b"ACK", address)
+                pkt_list.append(pkt)
+                if pkt["length"] < chunk_size and not pkt["is_meta"]:
+                    break
+
+        file_name = pkt_list[0]["payload"]
+        with open(file_name, "wb") as f:
+            for p in pkt_list[1:]:
+                f.write(p["payload"])
+
+        print(f"Receive file {file_name.decode()} from {address} successfully")
+
+
+def main():
+    for i in range(MAX_CLIENTS):
+        Server(PORT + i).start()
+
+
+if __name__ == "__main__":
+    main()

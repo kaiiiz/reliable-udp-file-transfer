@@ -1,0 +1,85 @@
+#! /usr/bin/env python3
+
+import threading
+import socket
+import os
+import hashlib
+import pickle
+import random
+import copy
+import argparse
+
+parser = argparse.ArgumentParser()
+parser.add_argument("server_ip")
+parser.add_argument("server_port")
+parser.add_argument("file_name")
+args = parser.parse_args()
+
+SERVER_IP = args.server_ip
+SERVER_PORT = int(args.server_port)
+FILE_NAME = args.file_name
+SERVER_ADDR = ((SERVER_IP, SERVER_PORT))
+
+seq_no = 0
+chunk_size = 512
+
+
+class pkt:
+    def __init__(self, data, is_meta=False):
+        global seq_no
+        self.seq = seq_no
+        seq_no += 1
+        self.length = len(data)
+        self.payload = data
+        self.checksum = hashlib.sha1(data).hexdigest()
+        self.is_meta = is_meta
+
+    def serial(self):
+        return pickle.dumps({
+            "seq": self.seq,
+            "length": self.length,
+            "payload": self.payload,
+            "checksum": self.checksum,
+            "is_meta": self.is_meta,
+        })
+
+
+def make_pkt(file_name):
+    f = open(file_name, "rb")
+    chunk = f.read(chunk_size)
+    pkt_list = [] # first packet is filename
+    pkt_list.append(pkt(file_name.encode(), True))
+    while chunk:
+        pkt_list.append(pkt(chunk))
+        chunk = f.read(chunk_size)
+    f.close()
+    if len(pkt_list) == 0 or pkt_list[-1].length == chunk_size:
+        pkt_list.append(pkt(b""))
+    return pkt_list
+
+
+def send_file(sock, file_name):
+    pkt_list = make_pkt(file_name)
+    x = 0
+    while x < len(pkt_list):
+        send_pkt = pkt_list[x]
+        sock.sendto(send_pkt.serial(), SERVER_ADDR)
+        sock.settimeout(0.1)
+        try:
+            ack, address = sock.recvfrom(1024)
+            print(f"seq: {x} acknowledged by {address}")
+            x += 1
+        except KeyboardInterrupt:
+            break
+        except:
+            print(f"seq: {x} timeout, resending")
+            continue
+
+
+def main():
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    send_file(sock, FILE_NAME)
+
+
+if __name__ == "__main__":
+    main()
